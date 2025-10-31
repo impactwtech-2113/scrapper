@@ -1,37 +1,49 @@
 import os
 import json
 import time
+import random
 from urllib.parse import quote_plus, urlparse
 
 import requests
 import streamlit as st
 
-# 🔑 Paste your RapidAPI key below (Line 7)
-RAPIDAPI_KEY = "PASTE_YOUR_RAPIDAPI_KEY_HERE"
+st.title("LinkedIn JSON Scraper")
+top_msg = st.empty()  # banner placeholder
 
-# 🚀 Base config
 HOST = "linkedin-scraper-api-real-time-fast-affordable.p.rapidapi.com"
 BASE_URL = f"https://{HOST}/profile/detail?username={{slug}}"
 
-HEADERS = {
+def _val(name: str, default: str) -> str:
+    return os.getenv(name) or default
+
+API_KEYS = [
+    _val("RAPIDAPI_PRIMARY_KEY", "41f26fb2cdmsh8238befe9b85fe0p10a4cbjsn25675cbc4986"),
+    _val("RAPIDAPI_BACKUP_KEY", ""),
+    _val("RAPIDAPI_KEY_3", ""),
+    _val("RAPIDAPI_KEY_4", ""),
+]
+
+CONNECT_TIMEOUT = 6
+READ_TIMEOUT = 18
+MAX_RETRIES_PER_KEY = 2
+
+TRANSIENT_STATUSES = {408, 425, 500, 502, 503, 504}
+QUOTA_STATUSES = {429, 401, 403}
+
+HEADERS_BASE = {
     "x-rapidapi-host": HOST,
-    "x-rapidapi-key": RAPIDAPI_KEY,
-    "Accept": "application/json",
+    "Accept": "application/json, text/plain;q=0.8, */*;q=0.5",
     "User-Agent": "streamlit-linkedin-json-scraper/1.0",
 }
 
-# Streamlit UI setup
-st.set_page_config(page_title="LinkedIn JSON Scraper", page_icon="🔍", layout="centered")
-st.title("🔍 LinkedIn JSON Scraper")
-st.markdown("Enter a LinkedIn profile URL or username to get structured JSON data.")
-
-user_input = st.text_input(
-    "Enter LinkedIn profile URL or username:",
-    placeholder="e.g. https://linkedin.com/in/neal-mohan or neal-mohan",
-)
+def ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        suf = "th"
+    else:
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
 
 def normalize_slug(text: str) -> str:
-    """Extract slug from full LinkedIn URL or return username directly."""
     t = text.strip()
     if t.startswith("http"):
         try:
@@ -43,54 +55,40 @@ def normalize_slug(text: str) -> str:
             pass
     return t
 
-def fetch_profile(slug: str):
-    """Call RapidAPI LinkedIn scraper and return JSON data."""
+def call_api(slug: str, api_key: str) -> requests.Response:
+    headers = dict(HEADERS_BASE)
+    headers["x-rapidapi-key"] = api_key
     url = BASE_URL.format(slug=quote_plus(slug))
-    response = requests.get(url, headers=HEADERS, timeout=(10, 20))
-    if response.status_code == 200:
-        return response.json()
-    else:
-        st.error(f"API Error: {response.status_code} - {response.text}")
-        return None
+    return requests.get(url, headers=headers, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+
+user_input = st.text_input(
+    "Enter LinkedIn vanity handle or profile URL",
+    placeholder="Sadhana or https://linkedin.com/in/sadhanab13/",
+)
 
 if st.button("Submit") and user_input.strip():
-    slug = normalize_slug(user_input)
-    st.info(f"Fetching LinkedIn data for **{slug}**... ⏳")
+    try:
+        slug = normalize_slug(user_input)
+        success = False
+        logs = []
 
-    data = fetch_profile(slug)
+        for i, api_key in enumerate(API_KEYS, start=1):
+            try:
+                res = call_api(slug, api_key)
+                if res.status_code == 200:
+                    data = res.json()
+                    st.success("✅ Profile fetched successfully!")
+                    st.json(data)
+                    success = True
+                    break
+                else:
+                    logs.append(f"Key {i}: {res.status_code} - {res.text}")
+            except Exception as e:
+                logs.append(f"Key {i}: {type(e).__name__} - {e}")
 
-    if data:
-        st.success("Profile data fetched successfully! ✅")
+        if not success:
+            st.error("❌ All API keys failed. Check logs or subscription.")
+            st.write(logs)
 
-        # --- Extracting key fields for summary ---
-        name = data.get("fullName") or data.get("name") or "N/A"
-        headline = data.get("headline") or "N/A"
-        location = data.get("location") or "N/A"
-        about = data.get("about") or "N/A"
-        exp_list = data.get("experience", [])
-        edu_list = data.get("education", [])
-
-        # --- Display formatted summary ---
-        st.subheader("👤 Profile Summary")
-        st.write(f"**Name:** {name}")
-        st.write(f"**Headline:** {headline}")
-        st.write(f"**Location:** {location}")
-        st.write(f"**About:** {about}")
-
-        st.markdown("### 💼 Experience")
-        if exp_list:
-            for exp in exp_list:
-                st.markdown(f"- **{exp.get('title', '')}**, {exp.get('company', '')} ({exp.get('duration', '')})")
-        else:
-            st.write("No experience data found.")
-
-        st.markdown("### 🎓 Education")
-        if edu_list:
-            for edu in edu_list:
-                st.markdown(f"- **{edu.get('school', '')}**, {edu.get('degree', '')}")
-        else:
-            st.write("No education data found.")
-
-        # --- Raw JSON Output ---
-        st.markdown("### 🧾 Full JSON Response")
-        st.json(data)
+    except Exception as e:
+        st.error(f"Unexpected error: {type(e).__name__} - {e}")
