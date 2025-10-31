@@ -199,7 +199,7 @@ st.markdown("Enter a LinkedIn profile URL or username (vanity handle). Example: 
 
 user_input = st.text_input(
     "LinkedIn vanity handle or profile URL",
-    placeholder="e.g. sadhana b or https://linkedin.com/in/sadhanab13/",
+    placeholder="e.g. ekprit b or https://linkedin.com/in/ekprit/",
 )
 
 col_a, col_b = st.columns([3, 1])
